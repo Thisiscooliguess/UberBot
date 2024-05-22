@@ -1,13 +1,47 @@
-from curses import raw
-import json
-from pickle import OBJ
-import requests
-
+import datetime
 from typing import Any, Dict, List, Union
-
-from requests import Request, get, head
 from file_ops import SetF
-from pprint import pprint
+from colored import Fore, Style
+
+import json
+import requests
+import logging as log
+
+
+LEVEL_COLORS = {
+    log.DEBUG: Fore.dark_gray,
+    log.INFO: Fore.blue,
+    log.WARNING: Fore.yellow,
+    log.ERROR: Fore.orange_4a,
+    log.CRITICAL: Fore.red,
+}
+
+
+class CustomFormatter(log.Formatter):
+    def format(self, record: log.LogRecord) -> str:
+        message = ""
+
+        message += (
+            f"[{LEVEL_COLORS[record.levelno]}{record.levelname[0]}{Style.reset}] "
+        )
+
+        message += (
+            f"{Fore.dark_gray}{datetime.datetime.now().isoformat(' ')}{Style.reset} "
+        )
+
+        message += "- "
+        message += record.getMessage()
+
+        return message
+
+
+log.basicConfig(level=log.DEBUG)
+logger = log.getLogger()
+
+for handler in logger.root.handlers:
+    handler.setFormatter(CustomFormatter(handler.formatter._fmt))
+
+log.info("Loading...")
 
 
 def get_keys() -> Dict:
@@ -185,7 +219,7 @@ class PtUser(PtObj):
             self.admin = data["admin"]
 
     def __repr__(self) -> str:
-        return f"<PtUser {self.username} id={self.id}, email={self.email}, admin={self.admin}>"
+        return f"<PtUser {self.username} {self.email} id={self.id}>"
 
     def validate_obj(self) -> bool:
         return super().validate_obj() and self.raw_data.get("attributes")
@@ -193,9 +227,9 @@ class PtUser(PtObj):
 
 class PtAPI:
     def __init__(self, do_stuff: bool = True):
-
         self.keys = {}
         self.server_info = {}
+        self.user_info = {}
         self.API_URL = "https://panel.embotic.xyz/api/client/"
         self.rateLeft = 720
         self.rateMax = 720
@@ -203,6 +237,7 @@ class PtAPI:
         if do_stuff:
             self.refresh_keys()
             self.refresh_serv_info()
+            self.refresh_user_info()
 
     def p_get(self, url: str, key: str) -> Union[dict, List]:
         url = self.API_URL + url
@@ -212,11 +247,17 @@ class PtAPI:
 
         data = filter_data(json.loads(resp.text))
 
+        if str(resp.status_code)[0] != "2":
+            log.error(f"Error: {data}")
+            return {}
+
         try:
             self.rateMax = resp.headers["x-ratelimit-limit"]
             self.rateLeft = resp.headers["x-ratelimit-remaining"]
         except:
-            pass
+            log.warning("Cannot get ratelimit")
+
+        log.debug(f"Ratelimit: {self.rateLeft}/{self.rateMax}")
 
         return data
 
@@ -224,11 +265,20 @@ class PtAPI:
         self.keys = get_keys()
 
     def refresh_serv_info(self):
+        log.info("Refreshing servers...")
         acc_servers = {}
         for key, value in self.keys.items():
             acc_servers[key] = self.get_serv_info(value)
 
         self.server_info = acc_servers
+
+    def refresh_user_info(self):
+        log.info("Refreshing users...")
+        acc_users = {}
+        for key, value in self.keys.items():
+            acc_users[key] = self.get_user_info(value)
+
+        self.user_info = acc_users
 
     def get_serv_info(self, key) -> dict:
         return self.p_get(url="", key=key)
@@ -268,4 +318,3 @@ def filter_data(d):
 
 
 api = PtAPI(do_stuff=True)
-print(api.server_info)
