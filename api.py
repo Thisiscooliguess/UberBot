@@ -167,6 +167,30 @@ class PtServ(PtObj):
         return f'<Server "{self.name}" - uuid: {self.uuid}, identifier: {self.ident}>'
 
 
+class PtUser(PtObj):
+    def __init__(self, raw_data: dict = {}) -> None:
+        super().__init__(raw_data)
+
+        self.id: int = None
+        self.username: str = None
+        self.email: str = None
+        self.admin: bool = None
+
+        if self.validate_obj():
+            data = raw_data["attributes"]
+
+            self.id = data["id"]
+            self.username = data["username"]
+            self.email = data["email"]
+            self.admin = data["admin"]
+
+    def __repr__(self) -> str:
+        return f"<PtUser {self.username} id={self.id}, email={self.email}, admin={self.admin}>"
+
+    def validate_obj(self) -> bool:
+        return super().validate_obj() and self.raw_data.get("attributes")
+
+
 class PtAPI:
     def __init__(self, do_stuff: bool = True):
 
@@ -178,6 +202,7 @@ class PtAPI:
 
         if do_stuff:
             self.refresh_keys()
+            self.refresh_serv_info()
 
     def p_get(self, url: str, key: str) -> Union[dict, List]:
         url = self.API_URL + url
@@ -187,8 +212,11 @@ class PtAPI:
 
         data = filter_data(json.loads(resp.text))
 
-        self.rateMax = resp.headers["x-ratelimit-limit"]
-        self.rateLeft = resp.headers["x-ratelimit-remaining"]
+        try:
+            self.rateMax = resp.headers["x-ratelimit-limit"]
+            self.rateLeft = resp.headers["x-ratelimit-remaining"]
+        except:
+            pass
 
         return data
 
@@ -196,12 +224,17 @@ class PtAPI:
         self.keys = get_keys()
 
     def refresh_serv_info(self):
-        acc_servers = []
-        for key, value in self.keys.items:
-            acc_servers[key] = self.get_serv_info(key)
+        acc_servers = {}
+        for key, value in self.keys.items():
+            acc_servers[key] = self.get_serv_info(value)
+
+        self.server_info = acc_servers
 
     def get_serv_info(self, key) -> dict:
         return self.p_get(url="", key=key)
+
+    def get_user_info(self, key) -> dict:
+        return self.p_get(url="account", key=key)
 
 
 OBJECT_NAMES = {
@@ -209,6 +242,7 @@ OBJECT_NAMES = {
     "server": PtServ,
     "allocation": PtAlloc,
     "egg_variable": PtEggVar,
+    "user": PtUser,
 }
 
 
@@ -233,4 +267,5 @@ def filter_data(d):
     return d
 
 
-d = PtAPI().get_serv_info(list(get_keys().values())[0])
+api = PtAPI(do_stuff=True)
+print(api.server_info)
