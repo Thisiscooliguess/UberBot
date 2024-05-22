@@ -1,12 +1,14 @@
 import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Union
+import urllib.request
 from file_ops import SetF
 from colored import Fore, Style
 
 import json
 import requests
 import logging as log
-
+import urllib.parse, urllib.request
 
 LEVEL_COLORS = {
     log.DEBUG: Fore.dark_gray,
@@ -114,6 +116,9 @@ class PtArr(PtObj):
 
     def __iter__(self):
         return iter(self.data)
+
+    def __getitem__(self, item):
+        return self.data[item]
 
 
 class PtAlloc(PtObj):
@@ -225,6 +230,51 @@ class PtUser(PtObj):
         return super().validate_obj() and self.raw_data.get("attributes")
 
 
+class PtFile(PtObj):
+    def __init__(self, raw_data: dict = {}) -> None:
+        super().__init__(raw_data)
+
+        self.name: str = None
+        self.mode: str = None
+        self.size: int = None
+        self.is_file: bool = None
+        self.is_editable: bool = None
+        self.created_at: datetime.datetime = None
+        self.modified_at: datetime.datetime = None
+
+        if self.validate_obj():
+            data = raw_data["attributes"]
+
+            self.name = data["name"]
+            self.mode = data["mode"]
+            self.size = data["size"]
+            self.is_file = data["is_file"]
+            self.created_at = datetime.datetime.fromisoformat(data["created_at"])
+            self.modified_at = datetime.datetime.fromisoformat(data["modified_at"])
+
+    def __repr__(self) -> str:
+        return f"<PtFile {self.name} - size: {self.size} MB, file: {self.is_file}>"
+
+    def validate_obj(self) -> bool:
+        return super().validate_obj() and self.raw_data.get("attributes")
+
+
+class PtURL(PtObj):
+    def __init__(self, raw_data: dict = {}) -> None:
+        super().__init__(raw_data)
+
+        self.url: str = None
+
+        if self.validate_obj():
+            self.url = raw_data["attributes"]["url"]
+
+    def __repr__(self) -> str:
+        return f'<PtURL "{self.url}>"'
+
+    def validate_obj(self) -> bool:
+        return super().validate_obj() and self.raw_data.get("attributes")
+
+
 class PtAPI:
     def __init__(self, do_stuff: bool = True):
         self.keys = {}
@@ -239,17 +289,11 @@ class PtAPI:
             self.refresh_serv_info()
             self.refresh_user_info()
 
-    def p_get(self, url: str, key: str) -> Union[dict, List]:
+    def p_get(self, url: str, key: str, is_json: bool = True) -> Union[dict, List]:
         url = self.API_URL + url
         headers = {"Authorization": "Bearer " + key, "accept": "application/json"}
 
         resp = requests.request("GET", url=url, headers=headers)
-
-        data = filter_data(json.loads(resp.text))
-
-        if str(resp.status_code)[0] != "2":
-            log.error(f"Error: {data}")
-            return {}
 
         try:
             self.rateMax = resp.headers["x-ratelimit-limit"]
@@ -259,7 +303,16 @@ class PtAPI:
 
         log.debug(f"Ratelimit: {self.rateLeft}/{self.rateMax}")
 
-        return data
+        if is_json:
+            data = filter_data(json.loads(resp.text))
+
+            if str(resp.status_code)[0] != "2":
+                log.error(f"Error: {data}")
+                return {}
+
+            return data
+
+        return resp.text
 
     def refresh_keys(self):
         self.keys = get_keys()
@@ -280,11 +333,50 @@ class PtAPI:
 
         self.user_info = acc_users
 
-    def get_serv_info(self, key) -> dict:
+    def get_serv_info(self, key: str) -> dict:
         return self.p_get(url="", key=key)
 
-    def get_user_info(self, key) -> dict:
+    def get_user_info(self, key: str) -> dict:
         return self.p_get(url="account", key=key)
+
+    def get_files(self, key: str, path: str, server: Union[str, PtServ]) -> list:
+        return self.p_get(
+            url=f"servers/{server.ident if type(server) == PtServ else server}/files/list?directory={urllib.parse.quote(path, safe='')}",
+            key=key,
+        )
+
+    def get_file_content(self, key: str, path: str, server: Union[str, PtServ]) -> list:
+        return self.p_get(
+            url=f"servers/{server.ident if type(server) == PtServ else server}/files/contents?file={urllib.parse.quote(path, safe='')}",
+            key=key,
+            is_json=False,
+        )
+
+    def download_file(
+        self,
+        key: str,
+        path: str,
+        server: Union[str, PtServ],
+        localPath: Path = Path(__file__).parent,
+    ) -> int:
+        url = self.p_get(
+            url=f"servers/{server.ident if type(server) == PtServ else server}/files/download?file={urllib.parse.quote(path, safe='')}",
+            key=key,
+        ).url
+
+        localPath = localPath / Path(path).name
+
+        print(url)
+        log.info(f"Downloading file {path} to {localPath}...")
+
+        try:
+            urllib.request.urlretrieve(url=url, filename=localPath)
+        except Exception as e:
+            log.error(f"Cannot download file with error {e}")
+            return 1
+
+        log.info("Downloaded!")
+        return 0
 
 
 OBJECT_NAMES = {
@@ -293,6 +385,8 @@ OBJECT_NAMES = {
     "allocation": PtAlloc,
     "egg_variable": PtEggVar,
     "user": PtUser,
+    "file_object": PtFile,
+    "signed_url": PtURL,
 }
 
 
